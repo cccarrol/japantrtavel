@@ -1158,7 +1158,7 @@ let S={
   showAddFlight:false,showFlightCal:false,showFlightCal2:false,
   flightCalYear:new Date().getFullYear(),flightCalMonth:new Date().getMonth(),
   flightCal2Year:new Date().getFullYear(),flightCal2Month:new Date().getMonth(),
-  newFlight:{type:"flight",from:"",to:"",date:"",dateArr:"",overnight:false,dep:"",arr:"",no:"",carrier:"",price:""},
+  newFlight:{type:"flight",from:"",to:"",date:"",dateArr:"",overnight:false,dep:"",arr:"",no:"",carrier:"",cur:"",budget:"",spent:"",price:""},
   editingFlightId:null,editFlightCal:false,editFlightCal2:false,
   editFlightCalYear:new Date().getFullYear(),editFlightCalMonth:new Date().getMonth(),
   editFlightCal2Year:new Date().getFullYear(),editFlightCal2Month:new Date().getMonth(),
@@ -1289,7 +1289,7 @@ async function loadUserData(){
   }catch(e){console.error(e);}
   S.loading=false;
 }
-async function saveScheduleDate(date){if(S.schedule[date])S.schedule[date].sort((a,b)=>a.time.localeCompare(b.time));showSaving();await sb.from("schedules").upsert({user_id:user.id,date,entries:S.schedule[date]||[]},{onConflict:"user_id,date"});}
+async function saveScheduleDate(date){if(S.schedule[date])S.schedule[date].sort((a,b)=>String(a.time||"").localeCompare(String(b.time||"")));showSaving();await sb.from("schedules").upsert({user_id:user.id,date,entries:S.schedule[date]||[]},{onConflict:"user_id,date"});}
 async function saveFlights(){showSaving();await sb.from("flights").upsert({user_id:user.id,data:S.flights},{onConflict:"user_id"});}
 async function saveHotels(){showSaving();await sb.from("hotels").upsert({user_id:user.id,data:S.hotels},{onConflict:"user_id"});}
 async function saveAIPlan(){showSaving();await sb.from("ai_plans").upsert({user_id:user.id,plan:S.aiPlan,trip_days:S.tripDays||7,trip_style:S.tripStyle||"全類型"},{onConflict:"user_id"});}
@@ -1349,24 +1349,27 @@ function entrySpent(e){if(e&&typeof e.spent==="number")return e.spent>0?e.spent:
 function sumDay(entries){let budget=0,spent=0;(entries||[]).forEach(e=>{budget+=entryBudget(e);spent+=entrySpent(e);});return{budget,spent};}
 // 一筆交通票券的花費（¥日圓）。沒填價格就是 0
 function flightYen(f){return (f&&typeof f.price==="number"&&f.price>0)?f.price:0;}
+// 交通票券的預算 / 已花費（換算成日圓）。新版用 budget/spent+幣值；舊資料只有 price 就當預算
+function flightBudgetYen(f){if(!f)return 0;const b=hNum(f.budget);if(b>0)return toYen(b,f.cur||"JPY");return (typeof f.price==="number"&&f.price>0)?f.price:0;}
+function flightSpentYen(f){if(!f)return 0;const s=hNum(f.spent);return s>0?toYen(s,f.cur||"JPY"):0;}
 // 排程中的「景點」項目（排除交通，交通另由 S.flights 計算，避免重複）
 function spotEntries(date){return (S.schedule[date]||[]).filter(e=>!(e&&e.spot&&e.spot.isFlight));}
-// 全程合計 = 景點 + 交通票券 + 住宿（每項各用自己的幣值換算成日圓再加總）
+// 排程合計 = 景點 + 住宿（交通票券「不」計入排程，改在交通票券頁自己結算）
 function sumTrip(){
   let budget=0,spent=0;
   Object.keys(S.schedule).forEach(d=>{spotEntries(d).forEach(e=>{budget+=entryBudget(e);spent+=entrySpent(e);});});
-  (S.flights||[]).forEach(f=>{const y=flightYen(f);budget+=y;spent+=y;});
   (S.hotels||[]).forEach(h=>{budget+=toYen(hNum(h.budget),h.cur||"JPY");spent+=toYen(hNum(h.spent),h.cur||"JPY");});
   return{budget,spent};
 }
-// 單一日期合計（景點 + 當天交通 + 當天入住的住宿）
+// 單一日期合計（景點 + 當天入住的住宿；交通不計入排程）
 function sumDayAll(date){
   let budget=0,spent=0;
   spotEntries(date).forEach(e=>{budget+=entryBudget(e);spent+=entrySpent(e);});
-  (S.flights||[]).filter(f=>f.date===date).forEach(f=>{const y=flightYen(f);budget+=y;spent+=y;});
   (S.hotels||[]).filter(h=>h.checkin===date).forEach(h=>{budget+=toYen(hNum(h.budget),h.cur||"JPY");spent+=toYen(hNum(h.spent),h.cur||"JPY");});
   return{budget,spent};
 }
+// 交通票券頁的合計（只在這裡結算）
+function sumFlights(){let budget=0,spent=0;(S.flights||[]).forEach(f=>{budget+=flightBudgetYen(f);spent+=flightSpentYen(f);});return{budget,spent};}
 function yenTwd(n){return twd("¥"+(n||0));}
 // 把某幣值金額換算回日圓（rate = 每 1 日圓 ≈ 多少當地幣）
 function toYen(n,code){if(!code||code==="JPY")return Math.round(n||0);const c=CURRENCIES[code];if(!c||!c.rate)return Math.round(n||0);return Math.round((n||0)/c.rate);}
@@ -1440,24 +1443,29 @@ function buildSchedule(){
         ]),
         el("div",null,{fontSize:"10px",color:DIM,marginTop:"2px"},[[dayFlights.length?dayFlights.length+"段交通":"",dayHotels.length?dayHotels.length+"間住宿":"",entries.length+"個景點"].filter(Boolean).join(" · ")]),
       ]));
-      hdr2.appendChild(btn(null,"+ 新增景點",()=>{
+      hdr2.appendChild(btn(null,"✏️ 編輯",()=>{
         S.selDate=date;const d2=new Date(date+"T00:00");S.calYear=d2.getFullYear();S.calMonth=d2.getMonth();
         renderApp();setTimeout(()=>{const cal=document.querySelector(".cal-wrap");if(cal)cal.scrollIntoView({behavior:"smooth",block:"start"});},100);
       },{background:"rgba(212,96,122,.2)",color:RED,border:".5px solid var(--primary-border-md)",borderRadius:"6px",padding:"3px 10px",fontSize:"11px",cursor:"pointer",fontFamily:"inherit"}));
       dayCard.appendChild(hdr2);
+      const items=[];
       dayFlights.forEach(f=>{
         const isArrDay=f.overnight&&f.dateArr===date&&f.date!==date;
+        const tlabel=(isArrDay?(f.arr||f.dep):(f.dep||""))||"";
+        const t=tlabel||"99:99";
         const fRow=dv(null,{display:"flex",gap:"8px",alignItems:"center",padding:"6px 8px",background:"rgba(212,96,122,.05)",borderRadius:"7px",marginBottom:"5px",borderLeft:`2px solid ${f.color||RED}`});
+        fRow.appendChild(sp({fontSize:"10px",color:f.color||RED,background:(f.color||RED)+"22",borderRadius:"5px",padding:"2px 7px",flexShrink:"0",fontWeight:"500",minWidth:"42px",textAlign:"center"},tlabel||"–"));
         fRow.appendChild(sp({fontSize:"16px",flexShrink:"0"},f.icon));
         const tag=f.overnight?(isArrDay?"（隔夜抵達 🌙）":"（隔夜出發 🌙）"):"";
         const span=f.overnight&&f.dateArr?"  "+f.date+" → "+f.dateArr:"";
         fRow.appendChild(dv(null,{flex:1,minWidth:"0"},[el("div",null,{fontSize:"11px",fontWeight:"600"},[f.from+" → "+f.to+tag]),el("div",null,{fontSize:"10px",color:DIM},[f.no+" · "+(f.dep||"")+(f.arr?" → "+f.arr:"")+span])]));
-        if(flightYen(f)>0&&!isArrDay)fRow.appendChild(el("div",null,{fontSize:"9px",color:"#2d8a2d",fontWeight:"700",flexShrink:"0",textAlign:"right"},["💴 "+showAmtYen(flightYen(f),"JPY")]));
-        dayCard.appendChild(fRow);
+        items.push({t,node:fRow});
       });
       dayHotels.forEach(h=>{
         const bd=hNum(h.budget),spn=hNum(h.spent);
+        const t=(h.inTime||"")||"99:98";
         const hRow=dv(null,{display:"flex",gap:"8px",alignItems:"center",padding:"6px 8px",background:"rgba(107,79,160,.06)",borderRadius:"7px",marginBottom:"5px",borderLeft:"2px solid #6B4FA0"});
+        hRow.appendChild(sp({fontSize:"10px",color:"#6B4FA0",background:"rgba(107,79,160,.14)",borderRadius:"5px",padding:"2px 7px",flexShrink:"0",fontWeight:"500",minWidth:"42px",textAlign:"center"},h.inTime||"入住"));
         hRow.appendChild(sp({fontSize:"16px",flexShrink:"0"},"🏨"));
         hRow.appendChild(dv(null,{flex:1,minWidth:"0"},[el("div",null,{fontSize:"11px",fontWeight:"600"},[h.name||"住宿"]),el("div",null,{fontSize:"10px",color:DIM},["入住 "+(h.inTime||"")+(h.checkout?" · 退房 "+h.checkout:"")])]));
         if(bd>0||spn>0){
@@ -1466,13 +1474,17 @@ function buildSchedule(){
           if(spn>0)cd.appendChild(el("div",null,{fontSize:"9px",color:"#2d8a2d",fontWeight:"600"},["已花費 "+showAmt(spn,h.cur||"JPY")]));
           hRow.appendChild(cd);
         }
-        dayCard.appendChild(hRow);
+        items.push({t,node:hRow});
       });
       entries.forEach(entry=>{
+        const t=entry.time||"99:99";
         const eRow=dv(null,{display:"flex",gap:"7px",alignItems:"center",padding:"5px 0",borderBottom:".5px solid rgba(212,96,122,.1)"});
         eRow.appendChild(sp({fontSize:"10px",color:RED,background:"rgba(212,96,122,.12)",borderRadius:"5px",padding:"2px 7px",flexShrink:"0",fontWeight:"500",minWidth:"42px",textAlign:"center"},entry.time));
         eRow.appendChild(sp({fontSize:"16px"},entry.spot.e));
-        eRow.appendChild(dv(null,{flex:1,minWidth:"0"},[el("div",null,{fontSize:"12px",fontWeight:"600"},[entry.spot.n]),el("div",null,{fontSize:"10px",color:DIM},["🕐 "+entry.spot.h])]));
+        eRow.appendChild(dv(null,{flex:1,minWidth:"0"},[
+          el("div",null,{fontSize:"12px",fontWeight:"600"},[entry.spot.n]),
+          el("div",null,{fontSize:"10px",color:DIM},["🕐 "+entry.spot.h+(entry.spot.p&&entry.spot.p!=="–"?" · "+twd(entry.spot.p):"")])
+        ]));
         const bd=entryBudget(entry),sp3=entrySpent(entry);
         if(bd>0||sp3>0){
           const cd=dv(null,{flexShrink:"0",textAlign:"right"});
@@ -1481,8 +1493,10 @@ function buildSchedule(){
           eRow.appendChild(cd);
         }
         eRow.appendChild(btn(null,"✕",async()=>{S.schedule[date]=S.schedule[date].filter(e=>e.id!==entry.id);await saveScheduleDate(date);renderApp();},{background:"none",border:"none",color:DIM,cursor:"pointer",fontSize:"13px",fontFamily:"inherit",padding:"0 2px",flexShrink:"0"}));
-        dayCard.appendChild(eRow);
+        items.push({t,node:eRow});
       });
+      items.sort((a,b)=>String(a.t).localeCompare(String(b.t)));
+      items.forEach(it=>dayCard.appendChild(it.node));
       {
         const dtot=sumDayAll(date);
         if(dtot.budget>0||dtot.spent>0)dayCard.appendChild(dv(null,{display:"flex",justifyContent:"flex-end",gap:"10px",marginTop:"7px",fontSize:"10px"},[
@@ -1594,7 +1608,7 @@ function buildDayPanel(){
       const budget=toYen(rawCost,S.schedCur||"JPY");
       const entry={id:Date.now(),spot,time:S.schedHour,budget,spent:0,cur:S.schedCur||"JPY",pay:S.schedPay||"card"};
       if(!S.schedule[date])S.schedule[date]=[];
-      S.schedule[date]=[...S.schedule[date],entry].sort((a,b)=>a.time.localeCompare(b.time));
+      S.schedule[date]=[...S.schedule[date],entry].sort((a,b)=>String(a.time||"").localeCompare(String(b.time||"")));
       S.schedPick=null;S.customName="";S.customEmoji="📌";S.customCost="";S.showAddSched=false;await saveScheduleDate(date);renderApp();
     }
     const cb=btn("pbtn","✓ 完成（加入）",addEntry,{flex:"1"});
@@ -1670,7 +1684,7 @@ function buildDayPanel(){
         entry.budget=toYen(parseInt(String(S.editEntry.budget||"").replace(/[^\d]/g,""))||0,S.editEntry.cur||"JPY");
         entry.spent=toYen(parseInt(String(S.editEntry.spent||"").replace(/[^\d]/g,""))||0,S.editEntry.cur||"JPY");
         entry.cur=S.editEntry.cur||"JPY";entry.pay=S.editEntry.pay||"card";
-        S.schedule[date].sort((a,b)=>a.time.localeCompare(b.time));
+        S.schedule[date].sort((a,b)=>String(a.time||"").localeCompare(String(b.time||"")));
         S.editEntryId=null;S.editEntry=null;await saveScheduleDate(date);renderApp();
       },{flex:"1"}));
       erow.appendChild(btn("gbtn","取消",()=>{S.editEntryId=null;S.editEntry=null;renderApp();},{flex:"1"}));
@@ -1683,7 +1697,7 @@ function buildDayPanel(){
       blk.appendChild(sp({fontSize:"17px"},entry.spot.e));
       const info=dv(null,{flex:1,minWidth:"0"});
       info.appendChild(el("div",null,{fontSize:"12px",fontWeight:"600"},[entry.spot.n]));
-      info.appendChild(el("div",null,{fontSize:"10px",color:DIM},["🕐 "+entry.spot.h+(entry.spot.p&&entry.spot.p!=="–"?" · 參考 "+twd(entry.spot.p):"")]));
+      info.appendChild(el("div",null,{fontSize:"10px",color:DIM},["🕐 "+entry.spot.h+(entry.spot.p&&entry.spot.p!=="–"?" · "+twd(entry.spot.p):"")]));
       const bd=entryBudget(entry),sp2=entrySpent(entry);
       if(bd>0||sp2>0){
         const bRow=dv(null,{display:"flex",gap:"6px",marginTop:"4px",flexWrap:"wrap"});
@@ -1718,7 +1732,12 @@ function buildDayPanel(){
       ]));
     }
   }
-  if(entries.length)panel.appendChild(dv(null,{textAlign:"right",marginTop:"6px"},[btn(null,"清空這天",async()=>{delete S.schedule[date];await saveScheduleDate(date);S.selDate=null;renderApp();},{background:"transparent",border:".5px solid var(--primary-border)",borderRadius:"7px",padding:"3px 10px",fontSize:"10px",color:DIM,cursor:"pointer",fontFamily:"inherit"})]));
+  {
+    const bottomRow=dv(null,{display:"flex",justifyContent:"flex-end",alignItems:"center",gap:"8px",marginTop:"10px"});
+    if(entries.length)bottomRow.appendChild(btn(null,"清空這天",async()=>{if(!confirm("確定清空這一天的所有行程？"))return;delete S.schedule[date];await saveScheduleDate(date);S.selDate=null;renderApp();},{background:"transparent",border:".5px solid var(--primary-border)",borderRadius:"7px",padding:"5px 12px",fontSize:"11px",color:DIM,cursor:"pointer",fontFamily:"inherit"}));
+    bottomRow.appendChild(btn(null,"✓ 完成",()=>{S.editEntryId=null;S.editEntry=null;S.showAddSched=false;S.schedPick=null;S.selDate=null;renderApp();},{background:"var(--primary)",color:"#fff",border:"none",borderRadius:"7px",padding:"5px 18px",fontSize:"11px",fontWeight:"700",cursor:"pointer",fontFamily:"inherit"}));
+    panel.appendChild(bottomRow);
+  }
   return panel;
 }
 /* ── 共用日曆渲染器 ── */
@@ -1782,10 +1801,13 @@ function buildFlights(){
     }),
   ]));
   {
-    const tprice=S.flights.reduce((s,f)=>s+((typeof f.price==="number"&&f.price>0)?f.price:0),0);
-    if(tprice>0)w.appendChild(dv(null,{display:"flex",justifyContent:"space-between",alignItems:"center",background:"var(--card3)",border:".5px solid var(--primary-border)",borderRadius:"10px",padding:"9px 12px",marginBottom:"12px"},[
+    const tf=sumFlights();
+    if(tf.budget>0||tf.spent>0)w.appendChild(dv(null,{display:"flex",justifyContent:"space-between",alignItems:"center",background:"var(--card3)",border:".5px solid var(--primary-border)",borderRadius:"10px",padding:"9px 12px",marginBottom:"12px"},[
       el("div",null,{fontSize:"11px",color:DIM,fontWeight:"600"},["🎫 交通票券合計"]),
-      el("div",null,{fontSize:"13px",fontWeight:"700",color:"#2d8a2d"},[showAmtYen(tprice,"JPY")])
+      dv(null,{textAlign:"right"},[
+        el("div",null,{fontSize:"12px",fontWeight:"700",color:GOLD},["預算 "+yenTwd(tf.budget)]),
+        el("div",null,{fontSize:"12px",fontWeight:"700",color:"#2d8a2d",marginTop:"1px"},["已花費 "+yenTwd(tf.spent)])
+      ])
     ]));
   }
   S.flights.forEach(f=>{
@@ -1806,9 +1828,7 @@ function buildFlights(){
         i.addEventListener("input",e=>S.editFlight[k]=e.target.value);grid.appendChild(i);
       });
       inner.appendChild(grid);
-      const epRow=dv(null,{marginBottom:"9px"});
-      const epInp=document.createElement("input");epInp.className="inp";epInp.type="number";epInp.inputMode="numeric";epInp.placeholder="票價 / 金額 ¥（可留空）";epInp.value=S.editFlight.price||"";epInp.addEventListener("input",e=>S.editFlight.price=e.target.value);
-      epRow.appendChild(epInp);inner.appendChild(epRow);
+      inner.appendChild(flightCostFields(S.editFlight));
       const ovRowE=dv(null,{marginBottom:"9px"});
       ovRowE.appendChild(el("div",null,{fontSize:"11px",color:DIM,marginBottom:"5px"},["是否隔夜（跨日）"]));
       const ovSegE=dv(null,{display:"flex",gap:"6px"});
@@ -1836,7 +1856,7 @@ function buildFlights(){
       const btns=dv(null,{display:"flex",gap:"7px"});
       btns.appendChild(btn("pbtn","✓ 儲存變更",async()=>{
         const ov=!!S.editFlight.overnight;
-        const updated={...f,...S.editFlight,overnight:ov,dateArr:ov?(S.editFlight.dateArr||""):"",price:parseInt(String(S.editFlight.price||"").replace(/[^\d]/g,""))||0,icon:TT_ICON[S.editFlight.type]||f.icon,color:TT_COLOR[S.editFlight.type]||f.color};
+        const updated={...f,...S.editFlight,overnight:ov,dateArr:ov?(S.editFlight.dateArr||""):"",cur:S.editFlight.cur||"JPY",budget:hNum(S.editFlight.budget),spent:hNum(S.editFlight.spent),price:0,icon:TT_ICON[S.editFlight.type]||f.icon,color:TT_COLOR[S.editFlight.type]||f.color};
         S.flights=S.flights.map(x=>x.id===f.id?updated:x).sort((a,b)=>(a.date||"").localeCompare(b.date||""));
         S.editingFlightId=null;S.editFlightCal=false;S.editFlightCal2=false;await saveFlights();renderApp();
       },{style:{flex:1}}));
@@ -1845,7 +1865,7 @@ function buildFlights(){
     }else{
       inner.appendChild(dv(null,{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"9px"},[
         dv(null,{display:"flex",gap:"8px",alignItems:"center"},[sp({fontSize:"20px"},f.icon),dv(null,null,[el("div",null,{fontSize:"10px",color:DIM},[f.carrier]),el("div",null,{fontSize:"13px",fontWeight:"600"},[f.no])])]),
-        dv(null,{textAlign:"right"},[el("div",null,{fontSize:"10px",color:DIM},[(f.overnight&&f.dateArr)?(f.date+" → "+f.dateArr+" 🌙"):f.date]),el("div",null,{fontSize:"12px",color:GOLD,marginTop:"2px"},[(f.dep&&f.arr)?f.dep+" → "+f.arr:""]),(f.price>0?el("div",null,{fontSize:"11px",color:"#2d8a2d",fontWeight:"700",marginTop:"2px"},["💴 "+showAmtYen(f.price,"JPY")]):null)]),
+        dv(null,{textAlign:"right"},[el("div",null,{fontSize:"10px",color:DIM},[(f.overnight&&f.dateArr)?(f.date+" → "+f.dateArr+" 🌙"):f.date]),el("div",null,{fontSize:"12px",color:GOLD,marginTop:"2px"},[(f.dep&&f.arr)?f.dep+" → "+f.arr:""]),(hNum(f.budget)>0?el("div",null,{fontSize:"11px",color:GOLD,fontWeight:"700",marginTop:"2px"},["預算 "+showAmt(hNum(f.budget),f.cur||"JPY")]):(f.price>0?el("div",null,{fontSize:"11px",color:GOLD,fontWeight:"700",marginTop:"2px"},["預算 "+showAmtYen(f.price,"JPY")]):null)),(hNum(f.spent)>0?el("div",null,{fontSize:"11px",color:"#2d8a2d",fontWeight:"700",marginTop:"2px"},["已花費 "+showAmt(hNum(f.spent),f.cur||"JPY")]):null)]),
       ]));
       inner.appendChild(dv(null,{display:"flex",alignItems:"center",gap:"7px"},[
         dv(null,{textAlign:"center"},[el("div",null,{fontSize:"13px",fontWeight:"600"},[f.from]),el("div",null,{fontSize:"9px",color:DIM},["出發"])]),
@@ -1859,7 +1879,7 @@ function buildFlights(){
         S.editFlightCalYear=d2.getFullYear();S.editFlightCalMonth=d2.getMonth();
         const d3=f.dateArr?new Date(f.dateArr+"T00:00"):d2;
         S.editFlightCal2Year=d3.getFullYear();S.editFlightCal2Month=d3.getMonth();S.editFlightCal=false;S.editFlightCal2=false;
-        S.editFlight={type:f.type||"flight",from:f.from||"",to:f.to||"",date:f.date||"",dateArr:f.dateArr||"",overnight:!!f.overnight,dep:f.dep||"",arr:f.arr||"",no:f.no||"",carrier:f.carrier||"",price:(f.price>0?f.price:"")};
+        S.editFlight={type:f.type||"flight",from:f.from||"",to:f.to||"",date:f.date||"",dateArr:f.dateArr||"",overnight:!!f.overnight,dep:f.dep||"",arr:f.arr||"",no:f.no||"",carrier:f.carrier||"",cur:f.cur||(f.price>0?"JPY":curCode()),budget:(hNum(f.budget)>0?hNum(f.budget):(f.price>0?f.price:"")),spent:(hNum(f.spent)>0?hNum(f.spent):"")};
         renderApp();
       },{background:"rgba(212,96,122,.08)",color:"#2D1520",border:".5px solid rgba(212,96,122,.2)",borderRadius:"6px",padding:"4px 10px",fontSize:"11px",cursor:"pointer",fontFamily:"inherit"}));
       actRow.appendChild(btn(null,"刪除",async()=>{
@@ -1884,9 +1904,7 @@ function buildFlights(){
       const i=document.createElement("input");i.className="inp";i.placeholder=p;i.type="text";i.value=S.newFlight[k]||"";i.addEventListener("input",e=>S.newFlight[k]=e.target.value);grid2.appendChild(i);
     });
     form.appendChild(grid2);
-    const npRow=dv(null,{marginBottom:"9px"});
-    const npInp=document.createElement("input");npInp.className="inp";npInp.type="number";npInp.inputMode="numeric";npInp.placeholder="票價 / 金額 ¥（可留空）";npInp.value=S.newFlight.price||"";npInp.addEventListener("input",e=>S.newFlight.price=e.target.value);
-    npRow.appendChild(npInp);form.appendChild(npRow);
+    form.appendChild(flightCostFields(S.newFlight));
     const ovRowN=dv(null,{marginBottom:"9px"});
     ovRowN.appendChild(el("div",null,{fontSize:"11px",color:DIM,marginBottom:"5px"},["是否隔夜（跨日）"]));
     const ovSegN=dv(null,{display:"flex",gap:"6px"});
@@ -1915,9 +1933,9 @@ function buildFlights(){
     btns2.appendChild(btn("pbtn","確認新增",async()=>{
       if(!S.newFlight.from||!S.newFlight.to)return;
       const ov=!!S.newFlight.overnight;
-      S.flights.push({...S.newFlight,overnight:ov,dateArr:ov?(S.newFlight.dateArr||""):"",price:parseInt(String(S.newFlight.price||"").replace(/[^\d]/g,""))||0,id:"f"+Date.now(),icon:TT_ICON[S.newFlight.type]||"✈️",color:TT_COLOR[S.newFlight.type]||RED});
+      S.flights.push({...S.newFlight,overnight:ov,dateArr:ov?(S.newFlight.dateArr||""):"",cur:S.newFlight.cur||"JPY",budget:hNum(S.newFlight.budget),spent:hNum(S.newFlight.spent),price:0,id:"f"+Date.now(),icon:TT_ICON[S.newFlight.type]||"✈️",color:TT_COLOR[S.newFlight.type]||RED});
       S.flights.sort((a,b)=>(a.date||"").localeCompare(b.date||""));
-      S.showAddFlight=false;S.showFlightCal=false;S.showFlightCal2=false;S.newFlight={type:"flight",from:"",to:"",date:"",dateArr:"",overnight:false,dep:"",arr:"",no:"",carrier:"",price:""};
+      S.showAddFlight=false;S.showFlightCal=false;S.showFlightCal2=false;S.newFlight={type:"flight",from:"",to:"",date:"",dateArr:"",overnight:false,dep:"",arr:"",no:"",carrier:"",cur:"",budget:"",spent:"",price:""};
       await saveFlights();renderApp();
     },{style:{flex:1}}));
     btns2.appendChild(btn("gbtn","取消",()=>{S.showAddFlight=false;renderApp();},{style:{flex:1}}));
@@ -1962,6 +1980,23 @@ function hotelFormFields(obj){
     seg.appendChild(btn(null,t,()=>{obj.pay=v;renderApp();},{flex:"1",background:on?"var(--primary)":"var(--card3)",color:on?"#fff":"var(--text)",border:".5px solid var(--primary-border)",borderRadius:"8px",padding:"8px",fontSize:"12px",fontWeight:on?"700":"500",cursor:"pointer",fontFamily:"inherit"}));
   });
   payWrap.appendChild(seg);box.appendChild(payWrap);
+  return box;
+}
+// 交通票券的金額欄位：幣值 + 預算 + 已花費（綁定到 obj = S.newFlight / S.editFlight）
+function flightCostFields(obj){
+  if(!obj.cur)obj.cur=curCode();
+  const lbl=t=>el("div",null,{fontSize:"10px",color:DIM,margin:"7px 0 3px",fontWeight:"600"},[t]);
+  const symNow=()=>{const c=CURRENCIES[obj.cur]||CURRENCIES.JPY;return c.sym||"¥";};
+  const box=dv(null,{marginBottom:"9px"},[]);
+  const curWrap=dv(null,null,[lbl("金額幣值")]);
+  const curSel=el("select","inp",{cursor:"pointer"});
+  Object.keys(CURRENCIES).forEach(code=>{const o=el("option",null,null,[code]);o.value=code;if(code===obj.cur)o.selected=true;curSel.appendChild(o);});
+  curSel.addEventListener("change",e=>{obj.cur=e.target.value;renderApp();});
+  curWrap.appendChild(curSel);box.appendChild(curWrap);
+  const cRow=dv(null,{display:"flex",gap:"7px",marginTop:"7px"});
+  cRow.appendChild(dv(null,{flex:"1",minWidth:"0"},[lbl("預算 ("+symNow()+"，可留空)"),hInput("number","預算",obj.budget,e=>obj.budget=e.target.value)]));
+  cRow.appendChild(dv(null,{flex:"1",minWidth:"0"},[lbl("已花費 ("+symNow()+"，可留空)"),hInput("number","已花費",obj.spent,e=>obj.spent=e.target.value)]));
+  box.appendChild(cRow);
   return box;
 }
 function buildHotels(){
@@ -2176,7 +2211,7 @@ function buildAI(){
               S.schedule[d].push({id:Date.now()+Math.random(),time:(t<10?"0":"")+t+":00",spot});t+=3;
             }
           });
-          S.schedule[d].sort((a,b)=>a.time.localeCompare(b.time));
+          S.schedule[d].sort((a,b)=>String(a.time||"").localeCompare(String(b.time||"")));
           saveScheduleDate(d);
           S.aiAreaPicker=null;
           S.tab="schedule";S.selDate=d;
