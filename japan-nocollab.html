@@ -267,6 +267,23 @@ function twd(p){
   const shown=c.round<1?conv.toFixed(2):conv.toLocaleString();
   return `¥${m[1]}${sfx} / ${c.sym}${shown}${sfx}`;
 }
+// 把含有 ¥ 的價格字串（可能帶「機票」「約」「起」或區間「¥18,000–40,000」）保留原文，
+// 再依右上角選的幣別補上換算值，例如「機票¥18,000–40,000 / NT$3,600–8,000」
+function priceCur(str){
+  if(!str)return str;
+  const code=curCode();
+  if(code==="JPY")return str;
+  const c=CURRENCIES[code]||CURRENCIES.TWD;
+  if(!c||!c.rate)return str;
+  const nums=[];
+  const re=/¥\s?([\d,]+)(?:\s?[-–~〜]\s?([\d,]+))?/g;let mm;
+  while((mm=re.exec(String(str)))){const a=parseInt(mm[1].replace(/,/g,""));if(a>0)nums.push(a);if(mm[2]){const b=parseInt(mm[2].replace(/,/g,""));if(b>0)nums.push(b);}}
+  if(!nums.length)return str;
+  const fmt=n=>{const v=Math.round(n*c.rate/c.round)*c.round;return c.round<1?v.toFixed(2):v.toLocaleString();};
+  const lo=Math.min(...nums),hi=Math.max(...nums);
+  const conv=lo===hi?(c.sym+fmt(lo)):(c.sym+fmt(lo)+"–"+fmt(hi));
+  return str+" / "+conv;
+}
 
 const SPOTS={
 osaka:[
@@ -3012,7 +3029,7 @@ function buildTransport(){
       ]),
       dv(null,{textAlign:"right",flexShrink:"0",marginLeft:"8px"},[
         el("div",null,{fontSize:"13px",fontWeight:"700"},[r.t]),
-        el("div",null,{fontSize:"11px",color:GOLD,marginTop:"2px"},[r.p])
+        el("div",null,{fontSize:"11px",color:GOLD,marginTop:"2px"},[priceCur(r.p)])
       ])
     ]));
     if(r.note)c.appendChild(el("div",null,{fontSize:"9px",color:DIM,lineHeight:"1.5",marginTop:"5px",paddingTop:"5px",borderTop:".5px solid rgba(212,96,122,.15)"},["ℹ️ "+r.note]));
@@ -3025,7 +3042,7 @@ function buildTransport(){
   (AIRPORTS[origin]||[]).forEach(a=>{
     const c=dv("card",{marginBottom:"6px"});
     c.appendChild(dv(null,{display:"flex",justifyContent:"space-between",marginBottom:"3px"},[el("div",null,{fontSize:"11px",fontWeight:"600"},[a.from+" → "+a.to]),el("div",null,{fontSize:"12px",fontWeight:"700"},[a.dur])]));
-    c.appendChild(dv(null,{display:"flex",justifyContent:"space-between",alignItems:"center"},[el("span",null,{fontSize:"10px",color:DIM},["🚂 "+a.m+(a.note?" · ":""),el("span",null,{color:"#5fcc5f"},[a.note||""])]),el("span",null,{fontSize:"11px",color:GOLD,flexShrink:"0",marginLeft:"6px"},[a.p])]));
+    c.appendChild(dv(null,{display:"flex",justifyContent:"space-between",alignItems:"center"},[el("span",null,{fontSize:"10px",color:DIM},["🚂 "+a.m+(a.note?" · ":""),el("span",null,{color:"#5fcc5f"},[a.note||""])]),el("span",null,{fontSize:"11px",color:GOLD,flexShrink:"0",marginLeft:"6px"},[priceCur(a.p)])]));
     w.appendChild(c);
   });
   return w;
