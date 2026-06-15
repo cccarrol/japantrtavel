@@ -1378,18 +1378,20 @@ function flightBudgetYen(f){if(!f)return 0;const b=hNum(f.budget);if(b>0)return 
 function flightSpentYen(f){if(!f)return 0;const s=hNum(f.spent);return s>0?toYen(s,f.cur||"JPY"):0;}
 // 排程中的「景點」項目（排除交通，交通另由 S.flights 計算，避免重複）
 function spotEntries(date){return (S.schedule[date]||[]).filter(e=>!(e&&e.spot&&e.spot.isFlight));}
-// 排程合計 = 景點 + 住宿（交通票券「不」計入排程，改在交通票券頁自己結算）
+// 全程合計 = 景點 + 住宿 + 交通票券（交通票券頁仍會單獨結算一份）
 function sumTrip(){
   let budget=0,spent=0;
   Object.keys(S.schedule).forEach(d=>{spotEntries(d).forEach(e=>{budget+=entryBudget(e);spent+=entrySpent(e);});});
   (S.hotels||[]).forEach(h=>{budget+=toYen(hNum(h.budget),h.cur||"JPY");spent+=toYen(hNum(h.spent),h.cur||"JPY");});
+  (S.flights||[]).forEach(f=>{budget+=flightBudgetYen(f);spent+=flightSpentYen(f);});
   return{budget,spent};
 }
-// 單一日期合計（景點 + 當天入住的住宿；交通不計入排程）
+// 單一日期合計（景點 + 當天入住的住宿 + 當天出發的交通；隔夜班次只在出發日計一次）
 function sumDayAll(date){
   let budget=0,spent=0;
   spotEntries(date).forEach(e=>{budget+=entryBudget(e);spent+=entrySpent(e);});
   (S.hotels||[]).filter(h=>h.checkin===date).forEach(h=>{budget+=toYen(hNum(h.budget),h.cur||"JPY");spent+=toYen(hNum(h.spent),h.cur||"JPY");});
+  (S.flights||[]).filter(f=>f.date===date).forEach(f=>{budget+=flightBudgetYen(f);spent+=flightSpentYen(f);});
   return{budget,spent};
 }
 // 交通票券頁的合計（只在這裡結算）
@@ -1483,6 +1485,12 @@ function buildSchedule(){
         const tag=f.overnight?(isArrDay?"（隔夜抵達 🌙）":"（隔夜出發 🌙）"):"";
         const span=f.overnight&&f.dateArr?"  "+f.date+" → "+f.dateArr:"";
         fRow.appendChild(dv(null,{flex:1,minWidth:"0"},[el("div",null,{fontSize:"11px",fontWeight:"600"},[f.from+" → "+f.to+tag]),el("div",null,{fontSize:"10px",color:DIM},[f.no+" · "+(f.dep||"")+(f.arr?" → "+f.arr:"")+span])]));
+        if(!isArrDay&&(flightBudgetYen(f)>0||flightSpentYen(f)>0)){
+          const fc=dv(null,{flexShrink:"0",textAlign:"right"});
+          if(flightBudgetYen(f)>0)fc.appendChild(el("div",null,{fontSize:"9px",color:GOLD,fontWeight:"600"},["預算 "+yenTwd(flightBudgetYen(f))]));
+          if(flightSpentYen(f)>0)fc.appendChild(el("div",null,{fontSize:"9px",color:"#2d8a2d",fontWeight:"600"},["已花費 "+yenTwd(flightSpentYen(f))]));
+          fRow.appendChild(fc);
+        }
         items.push({t,node:fRow});
       });
       dayHotels.forEach(h=>{
