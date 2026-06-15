@@ -2,7 +2,7 @@
 <html lang="zh-TW">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>日本之旅 🇯🇵</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
@@ -32,7 +32,7 @@
 ::-webkit-scrollbar{width:3px;height:3px}
 ::-webkit-scrollbar-thumb{background:var(--primary);border-radius:2px}
 body{font-family:'Outfit',sans-serif;background:var(--bg);display:flex;justify-content:center;min-height:100vh;background-image:radial-gradient(circle at 20% 10%,rgba(212,96,122,.06) 0%,transparent 40%),radial-gradient(circle at 80% 90%,rgba(155,111,181,.05) 0%,transparent 40%)}
-.app{width:100%;max-width:430px;color:var(--text);background:var(--bg);min-height:100vh;position:relative}
+.app{width:100%;max-width:430px;color:var(--text);background:var(--bg);min-height:100vh;position:relative;zoom:1.15}
 @media(min-width:500px){body{padding:24px 0;align-items:flex-start}.app{border-radius:20px;min-height:auto;box-shadow:0 24px 80px var(--primary-dim);overflow:hidden}}
 .auth-screen{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:32px 24px;background:var(--bg)}
 .auth-logo{text-align:center;margin-bottom:40px}
@@ -1170,7 +1170,7 @@ let S={
   tab:"schedule",city:"osaka",cat:"全部",
   calYear:new Date().getFullYear(),calMonth:new Date().getMonth(),
   selDate:null,schedHour:"10:00",schedPick:null,customName:"",customEmoji:"📌",customCost:"",customPaid:false,showAddSched:false,editEntryId:null,editEntry:null,
-  schedule:{},flights:[],aiPlan:null,aiLoading:false,aiCity:"osaka",aiGenCount:0,metroOpen:false,aiAreaPicker:null,aiPickDate:"",exploreArea:null,showApiKey:false,
+  schedule:{},flights:[],aiPlan:null,aiLoading:false,aiCity:"osaka",aiGenCount:0,metroOpen:false,aiAreaPicker:null,aiPickDate:"",aiSlotPicker:null,aiSlotDate:"",aiSlotTime:"",exploreArea:null,showApiKey:false,
   tripDays:7,tripStyle:"文化美食",trDir:0,trFrom:"osaka",trTo:"tokyo",
   showAddFlight:false,showFlightCal:false,showFlightCal2:false,
   flightCalYear:new Date().getFullYear(),flightCalMonth:new Date().getMonth(),
@@ -1322,7 +1322,7 @@ function renderHdr(){
     dv("toggle",null,["osaka","kyoto","tokyo","fukuoka","hiroshima","nagoya","yokohama","sapporo","kobe","kawasaki","saitama","sendai"].map(c=>btn("cb"+(S.city===c?" on":""),CN[c],()=>{S.city=c;S.cat="全部";S.aiPlan=null;S.selStation=null;S.geoCoords=null;S.geoState="idle";renderApp();}))),
   ]));
   hdr.appendChild(dv("tabs",null,[["schedule","flights","hotels","ai","explore","nearby","transport","share"].map((id,i)=>{
-    const l=["📅 排程","🎫 交通票券","🏨 住宿","✦ AI行程","🗺 探索","📍 附近","🚄 交通","🔗 分享"][i];
+    const l=["📅 排程","🎫 交通票券","🏨 住宿","✦ AI行程","🗺 探索","📍 附近","🚄 交通資訊","🔗 分享"][i];
     return btn("tb"+(S.tab===id?" on":""),l,()=>{S.tab=id;renderApp();});
   })]));
   // keep the selected city visible in the horizontally-scrollable bar after a re-render
@@ -1331,6 +1331,14 @@ function renderHdr(){
     const tr=tog.getBoundingClientRect(),br=onBtn.getBoundingClientRect();
     if(br.left<tr.left||br.right>tr.right){
       tog.scrollLeft+=(br.left-tr.left)-(tog.clientWidth-onBtn.offsetWidth)/2;
+    }
+  }
+  // 同樣讓「作用中的分頁」在重畫後保持在可視範圍，避免切到右邊的分頁時整排捲回最左邊
+  const tabBar=hdr.querySelector(".tabs"),onTab=tabBar&&tabBar.querySelector(".tb.on");
+  if(tabBar&&onTab){
+    const tr2=tabBar.getBoundingClientRect(),br2=onTab.getBoundingClientRect();
+    if(br2.left<tr2.left||br2.right>tr2.right){
+      tabBar.scrollLeft+=(br2.left-tr2.left)-(tabBar.clientWidth-onTab.offsetWidth)/2;
     }
   }
 }
@@ -2099,6 +2107,15 @@ function buildHotels(){
   }
   return w;
 }
+// 把 AI 行程的一個時段轉成可加入排程的「景點」物件。
+// 若在景點資料庫找得到就用真資料；找不到（AI 自由發揮的活動）就直接用 AI 給的名稱／時間建立，確保每筆都能加。
+function aiSpotFrom(slot,city){
+  if(!slot)return null;
+  const known=(SPOTS[city]||[]).find(s=>s.id===slot.spotId);
+  if(known)return known;
+  if(!slot.activity)return null;
+  return {id:slot.spotId||("ai"+Date.now().toString(36)+Math.random().toString(36).slice(2,6)),e:slot.emoji||"📍",n:slot.activity,h:slot.time||"全日",p:"–"};
+}
 function buildAI(){
   const w=dv();
   w.appendChild(dv("stitle",null,["✦ AI "+CN[S.city]+"車站一日游規劃"]));
@@ -2175,17 +2192,46 @@ function buildAI(){
         const meta=el("div",null,{fontSize:"10px",color:DIM,marginTop:"1px"},null);meta.textContent=d.station+" · "+d.time;info.appendChild(meta);
         if(d.note){const n=el("div",null,{fontSize:"10px",color:GOLD,marginTop:"2px"},null);n.textContent="💡 "+d.note;info.appendChild(n);}
         row.appendChild(info);
-        // Add to schedule button
-        if(d.spotId){
-          const ab=el("button",null,{fontSize:"10px",padding:"3px 8px",borderRadius:"6px",border:".5px solid var(--primary)",background:"var(--primary-dim)",color:"var(--primary)",cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap",flexShrink:"0"},null);
-          ab.textContent="+ 加入";
+        // 「+ 加入」單個加入：先選「日期 + 時間」再加入
+        const spot0=aiSpotFrom(d,S.city);
+        const slotKey=area.name+"|"+key;
+        if(spot0){
+          const slotOpen=(S.aiSlotPicker===slotKey);
+          const ab=el("button",null,{fontSize:"10px",padding:"3px 8px",borderRadius:"6px",border:".5px solid var(--primary)",background:slotOpen?"var(--card3)":"var(--primary-dim)",color:"var(--primary)",cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap",flexShrink:"0"},null);
+          ab.textContent=slotOpen?"✕ 取消":"+ 加入";
           ab.addEventListener("click",()=>{
-            const spot=SPOTS[S.city].find(s=>s.id===d.spotId);
-            if(spot){S.schedPick=spot;S.tab="schedule";renderApp();}
+            if(S.aiSlotPicker===slotKey){S.aiSlotPicker=null;}
+            else{
+              S.aiSlotPicker=slotKey;S.aiAreaPicker=null;
+              S.aiSlotDate=S.aiPickDate||S.selDate||new Date().toISOString().slice(0,10);
+              S.aiSlotTime={morning:"09:00",afternoon:"13:00",evening:"18:00"}[key]||"10:00";
+            }
+            renderApp();
           });
           row.appendChild(ab);
         }
         card.appendChild(row);
+        // 單個加入的「日期 + 時間」選擇器
+        if(spot0&&S.aiSlotPicker===slotKey){
+          const pk=dv(null,{display:"flex",gap:"6px",alignItems:"center",flexWrap:"wrap",margin:"0 0 8px 54px"});
+          const di=el("input","ai-date-input",null,null);di.type="date";di.value=S.aiSlotDate||new Date().toISOString().slice(0,10);di.addEventListener("change",e=>{S.aiSlotDate=e.target.value;});
+          const ti=el("input","ai-date-input",{maxWidth:"108px"},null);ti.type="time";ti.value=S.aiSlotTime||"10:00";ti.addEventListener("change",e=>{S.aiSlotTime=e.target.value;});
+          const ok=el("button","ai-date-confirm",null,null);ok.textContent="✓ 確認";
+          ok.addEventListener("click",async()=>{
+            const day=S.aiSlotDate||new Date().toISOString().slice(0,10);
+            const tm=S.aiSlotTime||"10:00";
+            if(!S.schedule[day])S.schedule[day]=[];
+            if(S.schedule[day].find(e=>e.spot&&(e.spot.id===spot0.id||e.spot.n===spot0.n))){alert("「"+spot0.n+"」已經在 "+day+" 的排程裡了");return;}
+            S.schedule[day].push({id:Date.now()+Math.random(),time:tm,spot:spot0});
+            S.schedule[day].sort((a,b)=>String(a.time||"").localeCompare(String(b.time||"")));
+            await saveScheduleDate(day);
+            S.aiSlotPicker=null;
+            renderApp();
+            alert("✓ 已加入「"+spot0.n+"」到 "+day+" "+tm+"（停在 AI 行程頁）");
+          });
+          pk.appendChild(di);pk.appendChild(ti);pk.appendChild(ok);
+          card.appendChild(pk);
+        }
       });
       // ── Date picker button ────────────────────────────────
       const pickerOpen=(S.aiAreaPicker===area.name);
@@ -2194,11 +2240,11 @@ function buildAI(){
         color:pickerOpen?"var(--primary)":"#fff",
         border:pickerOpen?".5px solid var(--primary-border-md)":"none",
         fontSize:"11px",fontWeight:"700",cursor:"pointer",fontFamily:"inherit"},null);
-      openBtn.textContent=pickerOpen?"✕ 取消":"📅 加入排程（選擇日期）";
+      openBtn.textContent=pickerOpen?"✕ 取消":"📅 一鍵加入這區（選日期）";
       openBtn.addEventListener("click",()=>{
         if(S.aiAreaPicker===area.name){S.aiAreaPicker=null;}
         else{
-          S.aiAreaPicker=area.name;
+          S.aiAreaPicker=area.name;S.aiSlotPicker=null;
           S.aiPickDate=S.selDate||new Date().toISOString().slice(0,10);
         }
         renderApp();
@@ -2216,23 +2262,20 @@ function buildAI(){
         row.appendChild(di);
         const confirmBtn=el("button","ai-date-confirm",null,null);
         confirmBtn.textContent="✓ 加入";
-        confirmBtn.addEventListener("click",()=>{
-          const d=S.aiPickDate||new Date().toISOString().slice(0,10);
-          if(!d){alert("請選擇日期");return;}
-          if(!S.schedule[d])S.schedule[d]=[];
-          let t=9;
+        confirmBtn.addEventListener("click",async()=>{
+          const day=S.aiPickDate||new Date().toISOString().slice(0,10);
+          if(!day){alert("請選擇日期");return;}
+          if(!S.schedule[day])S.schedule[day]=[];
+          let t=9,added=0,skipped=0;
           [area.morning,area.afternoon,area.evening].forEach(slot=>{
-            if(!slot||!slot.spotId)return;
-            const spot=SPOTS[S.city].find(s=>s.id===slot.spotId);
-            if(spot&&!S.schedule[d].find(e=>e.spot&&e.spot.id===spot.id)){
-              S.schedule[d].push({id:Date.now()+Math.random(),time:(t<10?"0":"")+t+":00",spot});t+=3;
-            }
+            const spot=aiSpotFrom(slot,S.city);
+            if(!spot)return;
+            if(S.schedule[day].find(e=>e.spot&&(e.spot.id===spot.id||e.spot.n===spot.n))){skipped++;return;}
+            S.schedule[day].push({id:Date.now()+Math.random(),time:(t<10?"0":"")+t+":00",spot});t+=3;added++;
           });
-          S.schedule[d].sort((a,b)=>String(a.time||"").localeCompare(String(b.time||"")));
-          saveScheduleDate(d);
-          S.aiAreaPicker=null;
-          S.tab="schedule";S.selDate=d;
-          renderApp();
+          S.schedule[day].sort((a,b)=>String(a.time||"").localeCompare(String(b.time||"")));
+          await saveScheduleDate(day);
+          alert("✓ 已把「"+area.name+"」加到 "+day+"："+added+" 個行程"+(skipped?"（略過 "+skipped+" 個重複）":"")+"\n你還停在 AI 行程頁，可以繼續加其他區域。");
         });
         row.appendChild(confirmBtn);
         card.appendChild(row);
