@@ -1456,7 +1456,16 @@ function buildSchedule(){
   }
   w.appendChild(buildCal());
   if(S.selDate)w.appendChild(buildDayPanel());
-  const allDates=new Set([...Object.keys(S.schedule).filter(k=>(S.schedule[k]||[]).length>0),...S.flights.filter(f=>f.date).map(f=>f.date),...S.flights.filter(f=>f.overnight&&f.dateArr).map(f=>f.dateArr),...S.hotels.filter(h=>h.checkin).map(h=>h.checkin)]);
+  const fmtD=dt=>{const y=dt.getFullYear(),m=String(dt.getMonth()+1).padStart(2,"0"),da=String(dt.getDate()).padStart(2,"0");return y+"-"+m+"-"+da;};
+  const hotelSpanDates=[];
+  (S.hotels||[]).forEach(h=>{
+    if(!h.checkin)return;
+    const co=h.checkout||h.checkin;
+    let d=new Date(h.checkin+"T00:00");const end=new Date(co+"T00:00");
+    if(end<d){hotelSpanDates.push(h.checkin);return;}
+    while(d<=end){hotelSpanDates.push(fmtD(d));d.setDate(d.getDate()+1);}
+  });
+  const allDates=new Set([...Object.keys(S.schedule).filter(k=>(S.schedule[k]||[]).length>0),...S.flights.filter(f=>f.date).map(f=>f.date),...S.flights.filter(f=>f.overnight&&f.dateArr).map(f=>f.dateArr),...hotelSpanDates]);
   const sortedDates=[...allDates].sort();
   if(sortedDates.length){
     w.appendChild(dv(null,{height:"1px",background:"rgba(212,96,122,.12)",margin:"14px 0 12px"}));
@@ -1464,7 +1473,7 @@ function buildSchedule(){
     sortedDates.forEach(date=>{
       const entries=spotEntries(date);
       const dayFlights=S.flights.filter(f=>f.date===date||(f.overnight&&f.dateArr===date));
-      const dayHotels=S.hotels.filter(h=>h.checkin===date);
+      const dayHotels=S.hotels.filter(h=>{if(!h.checkin)return false;const co=h.checkout||h.checkin;return date>=h.checkin&&date<=co;});
       const dt=new Date(date+"T00:00");
       const isSel=date===S.selDate;
       const dayCard=dv(null,{background:isSel?"rgba(212,96,122,.06)":"#FFFFFF",border:`.5px solid ${isSel?RED:"rgba(212,96,122,.12)"}`,borderRadius:"13px",padding:"12px",marginBottom:"9px"});
@@ -1511,12 +1520,18 @@ function buildSchedule(){
       });
       dayHotels.forEach(h=>{
         const bd=hNum(h.budget),spn=hNum(h.spent);
-        const t=(h.inTime||"")||"99:98";
-        const hRow=dv(null,{display:"flex",gap:"8px",alignItems:"center",padding:"6px 8px",background:"rgba(107,79,160,.06)",borderRadius:"7px",marginBottom:"5px",borderLeft:"2px solid #6B4FA0"});
-        hRow.appendChild(sp({fontSize:"10px",color:"#6B4FA0",background:"rgba(107,79,160,.14)",borderRadius:"5px",padding:"2px 7px",flexShrink:"0",fontWeight:"500",minWidth:"42px",textAlign:"center"},h.inTime||"入住"));
-        hRow.appendChild(sp({fontSize:"16px",flexShrink:"0"},"🏨"));
-        hRow.appendChild(dv(null,{flex:1,minWidth:"0"},[el("div",null,{fontSize:"11px",fontWeight:"600"},[h.name||"住宿"]),el("div",null,{fontSize:"10px",color:DIM},["入住 "+(h.inTime||"")+(h.checkout?" · 退房 "+h.checkout:"")])]));
-        if(bd>0||spn>0||h.pay){
+        const co=h.checkout||h.checkin;
+        const isIn=date===h.checkin;
+        const isOut=(date===co)&&(co!==h.checkin);
+        let chip,sub,t;
+        if(isOut){chip=h.outTime||"退房";sub="退房"+(h.outTime?" "+h.outTime:"")+" · "+(h.name||"住宿");t=h.outTime||"06:00";}
+        else if(!isIn){chip="住宿";sub="住宿中"+(co?" · 退房 "+co:"");t="99:97";}
+        else{chip=h.inTime||"入住";sub="入住 "+(h.inTime||"")+(h.checkout?" · 退房 "+h.checkout:"");t=(h.inTime||"")||"99:98";}
+        const hRow=dv(null,{display:"flex",gap:"8px",alignItems:"center",padding:"6px 8px",background:isIn?"rgba(107,79,160,.06)":"rgba(107,79,160,.035)",borderRadius:"7px",marginBottom:"5px",borderLeft:"2px solid #6B4FA0"});
+        hRow.appendChild(sp({fontSize:"10px",color:"#6B4FA0",background:"rgba(107,79,160,.14)",borderRadius:"5px",padding:"2px 7px",flexShrink:"0",fontWeight:"500",minWidth:"42px",textAlign:"center"},chip));
+        hRow.appendChild(sp({fontSize:"16px",flexShrink:"0"},isOut?"🛎️":"🏨"));
+        hRow.appendChild(dv(null,{flex:1,minWidth:"0"},[el("div",null,{fontSize:"11px",fontWeight:"600"},[h.name||"住宿"]),el("div",null,{fontSize:"10px",color:DIM},[sub])]));
+        if(isIn&&(bd>0||spn>0||h.pay)){
           const cd=dv(null,{flexShrink:"0",textAlign:"right"});
           if(bd>0)cd.appendChild(el("div",null,{fontSize:"9px",color:GOLD,fontWeight:"600"},["預算 "+showAmt(bd,h.cur||"JPY")]));
           if(spn>0)cd.appendChild(el("div",null,{fontSize:"9px",color:"#2d8a2d",fontWeight:"600"},["已花費 "+showAmt(spn,h.cur||"JPY")]));
@@ -2071,7 +2086,8 @@ function buildHotels(){
       el("div",null,{fontSize:"11px",color:DIM,fontWeight:"600"},["🏨 "+S.hotels.length+" 間 · 共 "+totN+" 晚"]),
       dv(null,{textAlign:"right"},[
         el("div",null,{fontSize:"12px",fontWeight:"700",color:GOLD},["預算 "+yenTwd(totB)]),
-        el("div",null,{fontSize:"12px",fontWeight:"700",color:"#2d8a2d",marginTop:"1px"},["已花費 "+yenTwd(totS)])
+        el("div",null,{fontSize:"12px",fontWeight:"700",color:"#2d8a2d",marginTop:"1px"},["已花費 "+yenTwd(totS)]),
+        (totN>0&&(totS>0||totB>0))?el("div",null,{fontSize:"10px",color:DIM,fontWeight:"600",marginTop:"2px"},["平均 "+yenTwd(Math.round((totS>0?totS:totB)/totN))+" / 晚"]):null
       ])
     ]));
   }
@@ -2101,6 +2117,7 @@ function buildHotels(){
         dv(null,{textAlign:"right",flexShrink:"0",marginLeft:"8px"},[
           bd>0?el("div",null,{fontSize:"10px",color:GOLD,fontWeight:"600"},["預算 "+showAmt(bd,h.cur||"JPY")]):null,
           spn>0?el("div",null,{fontSize:"10px",color:"#2d8a2d",fontWeight:"600",marginTop:"1px"},["已花費 "+showAmt(spn,h.cur||"JPY")]):null,
+          ((spn>0||bd>0)&&ni>0)?el("div",null,{fontSize:"9px",color:DIM,fontWeight:"600",marginTop:"1px"},["平均 "+yenTwd(toYen(Math.round((spn>0?spn:bd)/ni),h.cur||"JPY"))+" / 晚"]):null,
           h.pay?el("div",null,{fontSize:"9px",color:DIM,fontWeight:"600",marginTop:"2px"},[h.pay==="cash"?"💵 現金":"💳 信用卡"]):null
         ])
       ]));
