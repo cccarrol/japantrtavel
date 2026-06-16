@@ -1174,7 +1174,7 @@ let S={
   showAddFlight:false,showFlightCal:false,showFlightCal2:false,
   flightCalYear:new Date().getFullYear(),flightCalMonth:new Date().getMonth(),
   flightCal2Year:new Date().getFullYear(),flightCal2Month:new Date().getMonth(),
-  newFlight:{type:"flight",from:"",to:"",date:"",dateArr:"",overnight:false,dep:"",arr:"",no:"",carrier:"",cur:"",budget:"",spent:"",price:""},
+  newFlight:{type:"flight",from:"",to:"",date:"",dateArr:"",overnight:false,dep:"",arr:"",no:"",carrier:"",cur:"",budget:"",spent:"",price:"",pay:"card"},
   editingFlightId:null,editFlightCal:false,editFlightCal2:false,
   editFlightCalYear:new Date().getFullYear(),editFlightCalMonth:new Date().getMonth(),
   editFlightCal2Year:new Date().getFullYear(),editFlightCal2Month:new Date().getMonth(),
@@ -1500,10 +1500,11 @@ function buildSchedule(){
         const tag=f.overnight?(isArrDay?"（隔夜抵達 🌙）":"（隔夜出發 🌙）"):"";
         const span=f.overnight&&f.dateArr?"  "+f.date+" → "+f.dateArr:"";
         fRow.appendChild(dv(null,{flex:1,minWidth:"0"},[el("div",null,{fontSize:"11px",fontWeight:"600"},[f.from+" → "+f.to+tag]),el("div",null,{fontSize:"10px",color:DIM},[f.no+" · "+(f.dep||"")+(f.arr?" → "+f.arr:"")+span])]));
-        if(!isArrDay&&(flightBudgetYen(f)>0||flightSpentYen(f)>0)){
+        if(!isArrDay&&(flightBudgetYen(f)>0||flightSpentYen(f)>0||f.pay)){
           const fc=dv(null,{flexShrink:"0",textAlign:"right"});
           if(flightBudgetYen(f)>0)fc.appendChild(el("div",null,{fontSize:"9px",color:GOLD,fontWeight:"600"},["預算 "+yenTwd(flightBudgetYen(f))]));
           if(flightSpentYen(f)>0)fc.appendChild(el("div",null,{fontSize:"9px",color:"#2d8a2d",fontWeight:"600"},["已花費 "+yenTwd(flightSpentYen(f))]));
+          if(f.pay)fc.appendChild(el("div",null,{fontSize:"9px",color:DIM,fontWeight:"600"},[f.pay==="cash"?"💵 現金":"💳 信用卡"]));
           fRow.appendChild(fc);
         }
         items.push({t,node:fRow});
@@ -1515,10 +1516,11 @@ function buildSchedule(){
         hRow.appendChild(sp({fontSize:"10px",color:"#6B4FA0",background:"rgba(107,79,160,.14)",borderRadius:"5px",padding:"2px 7px",flexShrink:"0",fontWeight:"500",minWidth:"42px",textAlign:"center"},h.inTime||"入住"));
         hRow.appendChild(sp({fontSize:"16px",flexShrink:"0"},"🏨"));
         hRow.appendChild(dv(null,{flex:1,minWidth:"0"},[el("div",null,{fontSize:"11px",fontWeight:"600"},[h.name||"住宿"]),el("div",null,{fontSize:"10px",color:DIM},["入住 "+(h.inTime||"")+(h.checkout?" · 退房 "+h.checkout:"")])]));
-        if(bd>0||spn>0){
+        if(bd>0||spn>0||h.pay){
           const cd=dv(null,{flexShrink:"0",textAlign:"right"});
           if(bd>0)cd.appendChild(el("div",null,{fontSize:"9px",color:GOLD,fontWeight:"600"},["預算 "+showAmt(bd,h.cur||"JPY")]));
           if(spn>0)cd.appendChild(el("div",null,{fontSize:"9px",color:"#2d8a2d",fontWeight:"600"},["已花費 "+showAmt(spn,h.cur||"JPY")]));
+          if(h.pay)cd.appendChild(el("div",null,{fontSize:"9px",color:DIM,fontWeight:"600"},[h.pay==="cash"?"💵 現金":"💳 信用卡"]));
           hRow.appendChild(cd);
         }
         items.push({t,node:hRow});
@@ -1533,10 +1535,11 @@ function buildSchedule(){
           el("div",null,{fontSize:"10px",color:DIM},["🕐 "+entry.spot.h+(entry.spot.p&&entry.spot.p!=="–"?" · "+twd(entry.spot.p):"")])
         ]));
         const bd=entryBudget(entry),sp3=entrySpent(entry);
-        if(bd>0||sp3>0){
+        if(bd>0||sp3>0||entry.pay){
           const cd=dv(null,{flexShrink:"0",textAlign:"right"});
           if(bd>0)cd.appendChild(el("div",null,{fontSize:"9px",color:GOLD,fontWeight:"600"},["預算 "+showAmtYen(bd,entry.cur||"JPY")]));
           if(sp3>0)cd.appendChild(el("div",null,{fontSize:"9px",color:"#2d8a2d",fontWeight:"600"},["已花費 "+showAmtYen(sp3,entry.cur||"JPY")]));
+          if(entry.pay)cd.appendChild(el("div",null,{fontSize:"9px",color:DIM,fontWeight:"600"},[entry.pay==="cash"?"💵 現金":"💳 信用卡"]));
           eRow.appendChild(cd);
         }
         eRow.appendChild(btn(null,"✕",async()=>{S.schedule[date]=S.schedule[date].filter(e=>e.id!==entry.id);await saveScheduleDate(date);renderApp();},{background:"none",border:"none",color:DIM,cursor:"pointer",fontSize:"13px",fontFamily:"inherit",padding:"0 2px",flexShrink:"0"}));
@@ -1920,13 +1923,14 @@ function buildFlights(){
         dv(null,{textAlign:"center"},[el("div",null,{fontSize:"13px",fontWeight:"600"},[f.to]),el("div",null,{fontSize:"9px",color:DIM},["抵達"])]),
       ]));
       const actRow=dv(null,{display:"flex",justifyContent:"flex-end",alignItems:"center",marginTop:"9px",gap:"6px"});
+      if(f.pay)actRow.appendChild(el("div",null,{fontSize:"9px",color:DIM,fontWeight:"600",marginRight:"auto"},[f.pay==="cash"?"💵 現金":"💳 信用卡"]));
       actRow.appendChild(btn(null,"編輯",()=>{
         S.editingFlightId=f.id;
         const d2=f.date?new Date(f.date+"T00:00"):new Date();
         S.editFlightCalYear=d2.getFullYear();S.editFlightCalMonth=d2.getMonth();
         const d3=f.dateArr?new Date(f.dateArr+"T00:00"):d2;
         S.editFlightCal2Year=d3.getFullYear();S.editFlightCal2Month=d3.getMonth();S.editFlightCal=false;S.editFlightCal2=false;
-        S.editFlight={type:f.type||"flight",from:f.from||"",to:f.to||"",date:f.date||"",dateArr:f.dateArr||"",overnight:!!f.overnight,dep:f.dep||"",arr:f.arr||"",no:f.no||"",carrier:f.carrier||"",cur:f.cur||(f.price>0?"JPY":curCode()),budget:(hNum(f.budget)>0?hNum(f.budget):(f.price>0?f.price:"")),spent:(hNum(f.spent)>0?hNum(f.spent):"")};
+        S.editFlight={type:f.type||"flight",from:f.from||"",to:f.to||"",date:f.date||"",dateArr:f.dateArr||"",overnight:!!f.overnight,dep:f.dep||"",arr:f.arr||"",no:f.no||"",carrier:f.carrier||"",cur:f.cur||(f.price>0?"JPY":curCode()),budget:(hNum(f.budget)>0?hNum(f.budget):(f.price>0?f.price:"")),spent:(hNum(f.spent)>0?hNum(f.spent):""),pay:f.pay||"card"};
         renderApp();
       },{background:"rgba(212,96,122,.08)",color:"#2D1520",border:".5px solid rgba(212,96,122,.2)",borderRadius:"6px",padding:"4px 10px",fontSize:"11px",cursor:"pointer",fontFamily:"inherit"}));
       actRow.appendChild(btn(null,"刪除",async()=>{
@@ -1982,7 +1986,7 @@ function buildFlights(){
       const ov=!!S.newFlight.overnight;
       S.flights.push({...S.newFlight,overnight:ov,dateArr:ov?(S.newFlight.dateArr||""):"",cur:S.newFlight.cur||"JPY",budget:hNum(S.newFlight.budget),spent:hNum(S.newFlight.spent),price:0,id:"f"+Date.now(),icon:TT_ICON[S.newFlight.type]||"✈️",color:TT_COLOR[S.newFlight.type]||RED});
       S.flights.sort((a,b)=>(a.date||"").localeCompare(b.date||""));
-      S.showAddFlight=false;S.showFlightCal=false;S.showFlightCal2=false;S.newFlight={type:"flight",from:"",to:"",date:"",dateArr:"",overnight:false,dep:"",arr:"",no:"",carrier:"",cur:"",budget:"",spent:"",price:""};
+      S.showAddFlight=false;S.showFlightCal=false;S.showFlightCal2=false;S.newFlight={type:"flight",from:"",to:"",date:"",dateArr:"",overnight:false,dep:"",arr:"",no:"",carrier:"",cur:"",budget:"",spent:"",price:"",pay:"card"};
       await saveFlights();renderApp();
     },{style:{flex:1}}));
     btns2.appendChild(btn("gbtn","取消",()=>{S.showAddFlight=false;renderApp();},{style:{flex:1}}));
@@ -2032,6 +2036,7 @@ function hotelFormFields(obj){
 // 交通票券的金額欄位：幣值 + 預算 + 已花費（綁定到 obj = S.newFlight / S.editFlight）
 function flightCostFields(obj){
   if(!obj.cur)obj.cur=curCode();
+  if(!obj.pay)obj.pay="card";
   const lbl=t=>el("div",null,{fontSize:"10px",color:DIM,margin:"7px 0 3px",fontWeight:"600"},[t]);
   const symNow=()=>{const c=CURRENCIES[obj.cur]||CURRENCIES.JPY;return c.sym||"¥";};
   const box=dv(null,{marginBottom:"9px"},[]);
@@ -2044,6 +2049,14 @@ function flightCostFields(obj){
   cRow.appendChild(dv(null,{flex:"1",minWidth:"0"},[lbl("預算 ("+symNow()+"，可留空)"),hInput("number","預算",obj.budget,e=>obj.budget=e.target.value)]));
   cRow.appendChild(dv(null,{flex:"1",minWidth:"0"},[lbl("已花費 ("+symNow()+"，可留空)"),hInput("number","已花費",obj.spent,e=>obj.spent=e.target.value)]));
   box.appendChild(cRow);
+  // 付款方式
+  const payWrap=dv(null,{marginTop:"7px"},[lbl("付款方式")]);
+  const seg=dv(null,{display:"flex",gap:"7px"});
+  [["card","💳 信用卡"],["cash","💵 現金"]].forEach(([v,t])=>{
+    const on=obj.pay===v;
+    seg.appendChild(btn(null,t,()=>{obj.pay=v;renderApp();},{flex:"1",background:on?"var(--primary)":"var(--card3)",color:on?"#fff":"var(--text)",border:".5px solid var(--primary-border)",borderRadius:"8px",padding:"8px",fontSize:"12px",fontWeight:on?"700":"500",cursor:"pointer",fontFamily:"inherit"}));
+  });
+  payWrap.appendChild(seg);box.appendChild(payWrap);
   return box;
 }
 function buildHotels(){
