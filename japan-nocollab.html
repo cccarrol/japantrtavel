@@ -204,8 +204,8 @@ body{font-family:'Outfit',sans-serif;background:var(--bg);display:flex;justify-c
       </div>
       <div class="auth-err" id="auth-err"></div>
       <div class="auth-ok" id="auth-ok"></div>
-      <div class="field"><label>電子郵件</label><input type="email" id="auth-email" placeholder="your@email.com" autocomplete="email"></div>
-      <div id="auth-password-field" class="field"><label>密碼</label><input type="password" id="auth-password" placeholder="至少 6 位數" autocomplete="current-password"></div>
+      <div class="field" id="auth-email-field"><label>電子郵件</label><input type="email" id="auth-email" placeholder="your@email.com" autocomplete="email"></div>
+      <div id="auth-password-field" class="field"><label id="auth-password-label">密碼</label><input type="password" id="auth-password" placeholder="至少 6 位數" autocomplete="current-password"></div>
       <span class="auth-forgot-link" id="forgot-link" onclick="switchAuthTab('forgot')">忘記密碼？</span>
       <div id="auth-forgot-fields" style="display:none">
         <div class="auth-forgot-title">重設密碼</div>
@@ -1195,19 +1195,22 @@ let authMode="login";
 function switchAuthTab(mode){
   authMode=mode;
   const isForgot=mode==="forgot";
+  const isReset=mode==="reset";
   const g=id=>document.getElementById(id);
   const setCls=(id,c)=>{const e=g(id);if(e)e.className=c;};
   const setDisp=(id,d)=>{const e=g(id);if(e)e.style.display=d;};
   setCls("tab-login","auth-tab"+(mode==="login"?" on":""));
   setCls("tab-register","auth-tab"+(mode==="register"?" on":""));
+  setDisp("auth-email-field",isReset?"none":"block");
   setDisp("auth-password-field",isForgot?"none":"block");
   setDisp("auth-forgot-fields",isForgot?"block":"none");
   setDisp("forgot-link",mode==="login"?"block":"none");
-  setDisp("auth-tabs",isForgot?"none":"flex");
+  setDisp("auth-tabs",(isForgot||isReset)?"none":"flex");
   setDisp("back-to-login",isForgot?"flex":"none");
-  const ab=g("auth-btn");if(ab)ab.textContent=mode==="login"?"登入":mode==="register"?"建立帳號":"傳送重設連結";
+  const pl=g("auth-password-label");if(pl)pl.textContent=isReset?"新密碼（至少 6 位）":"密碼";
+  const ab=g("auth-btn");if(ab)ab.textContent=mode==="login"?"登入":mode==="register"?"建立帳號":isReset?"更新密碼":"傳送重設連結";
   const ee=g("auth-err");if(ee)ee.classList.remove("show");
-  const oe=g("auth-ok");if(oe)oe.classList.remove("show");
+  const oe=g("auth-ok");if(oe&&!isReset)oe.classList.remove("show");
 }
 function withTimeout(promise,ms,label){
   return Promise.race([
@@ -1220,7 +1223,9 @@ async function handleAuth(){
   const errEl=document.getElementById("auth-err"),okEl=document.getElementById("auth-ok"),btnEl=document.getElementById("auth-btn");
   errEl.classList.remove("show");okEl.classList.remove("show");
   const password=document.getElementById("auth-password").value;
-  if(!email||(authMode!=="forgot"&&!password)){errEl.textContent="請填寫電子郵件和密碼";errEl.classList.add("show");return;}
+  if(authMode==="reset"){
+    if(!password){errEl.textContent="請輸入新密碼";errEl.classList.add("show");return;}
+  }else if(!email||(authMode!=="forgot"&&!password)){errEl.textContent="請填寫電子郵件和密碼";errEl.classList.add("show");return;}
   btnEl.disabled=true;btnEl.textContent="處理中…";
   const statusEl=document.getElementById("auth-status");
   if(statusEl)statusEl.textContent="連線中…";
@@ -1245,10 +1250,20 @@ async function handleAuth(){
       okEl.textContent=data.session?"✓ 帳號建立成功！請登入":"✓ 帳號已建立！若收到驗證信請先點擊確認，再回來登入";
       okEl.classList.add("show");switchAuthTab("login");
     }else if(authMode==="forgot"){
-      const{error}=await withTimeout(sb.auth.resetPasswordForEmail(email,{redirectTo:window.location.href}),12000,"寄送");
+      const{error}=await withTimeout(sb.auth.resetPasswordForEmail(email,{redirectTo:window.location.origin+window.location.pathname}),12000,"寄送");
       if(error)throw new Error(error.message);
       okEl.textContent="✉️ 重設密碼郵件已寄出，請確認您的信箱";okEl.classList.add("show");
       btnEl.textContent="已寄出";btnEl.disabled=true;
+    }else if(authMode==="reset"){
+      if(password.length<6)throw new Error("新密碼至少 6 位數");
+      const{data,error}=await withTimeout(sb.auth.updateUser({password}),12000,"更新密碼");
+      if(error)throw new Error(error.message);
+      try{history.replaceState(null,"",window.location.pathname+window.location.search);}catch(_){}
+      user=(data&&data.user)||user;
+      okEl.textContent="✓ 密碼已更新，正在進入…";okEl.classList.add("show");
+      clearTimeout(slowHint);if(statusEl)statusEl.textContent="";
+      resetUserState();showMainApp();loadUserData().then(()=>{try{renderApp();}catch(_){}}).catch(_=>{});
+      return;
     }
   }catch(e){
     errEl.textContent=(e&&e.message)?e.message:"發生錯誤，請稍後重試";errEl.classList.add("show");
@@ -1259,7 +1274,7 @@ async function handleAuth(){
     const forgotSent=authMode==="forgot"&&okEl.classList.contains("show");
     if(!forgotSent){
       btnEl.disabled=false;
-      btnEl.textContent=authMode==="login"?"登入":authMode==="register"?"建立帳號":"傳送重設連結";
+      btnEl.textContent=authMode==="login"?"登入":authMode==="register"?"建立帳號":authMode==="reset"?"更新密碼":"傳送重設連結";
     }
   }
 }
@@ -3230,15 +3245,30 @@ function buildShare(){
 }
 
 (async()=>{
+  const isRecovery=/type=recovery/.test((window.location.hash||"")+(window.location.search||""));
   try{
     const{data:{session}}=await withTimeout(sb.auth.getSession(),15000,"檢查登入狀態");
-    if(session&&session.user){
+    if(isRecovery){
+      if(session&&session.user)user=session.user;
+      document.getElementById("auth-screen").style.display="flex";
+      document.getElementById("main-app").style.display="none";
+      switchAuthTab("reset");
+      const oe=document.getElementById("auth-ok");if(oe){oe.textContent="請設定你的新密碼，再按「更新密碼」";oe.classList.add("show");}
+    }else if(session&&session.user){
       user=session.user;
       showMainApp();
       loadUserData().then(()=>{try{renderApp();}catch(_){}}).catch(_=>{});
     }
   }catch(e){console.error(e);}
-  sb.auth.onAuthStateChange((_,session)=>{
+  sb.auth.onAuthStateChange((event,session)=>{
+    if(event==="PASSWORD_RECOVERY"){
+      if(session&&session.user)user=session.user;
+      document.getElementById("auth-screen").style.display="flex";
+      document.getElementById("main-app").style.display="none";
+      switchAuthTab("reset");
+      const oe=document.getElementById("auth-ok");if(oe){oe.textContent="請設定你的新密碼，再按「更新密碼」";oe.classList.add("show");}
+      return;
+    }
     if(!session&&user){user=null;resetUserState();document.getElementById("auth-screen").style.display="flex";document.getElementById("main-app").style.display="none";}
   });
 })();
